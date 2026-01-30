@@ -58,10 +58,17 @@ def buat_dan_kirim():
         df['hu'] = pd.to_numeric(df['hu'])
         df['ws'] = pd.to_numeric(df['ws'])
         
-        # 2. LOGIKA ROLLING WINDOW (WIT)
-        sekarang = datetime.datetime.now() + datetime.timedelta(hours=9)
-        df_filtered = df[(df['Waktu_DT'] >= sekarang - datetime.timedelta(hours=3)) & 
-                         (df['Waktu_DT'] <= sekarang + datetime.timedelta(hours=28))].copy()
+        # 2. LOGIKA SHIFT (DIPERBARUI)
+        sekarang = datetime.datetime.now() + datetime.timedelta(hours=9) # Waktu WIT
+        
+        # Jika sebelum jam 12 siang -> Mulai dari jam 06:00 (Pagi)
+        # Jika sesudah jam 12 siang -> Mulai dari jam 18:00 (Malam)
+        if sekarang.hour < 12:
+            start_time = sekarang.replace(hour=6, minute=0, second=0, microsecond=0)
+        else:
+            start_time = sekarang.replace(hour=18, minute=0, second=0, microsecond=0)
+        
+        df_filtered = df[df['Waktu_DT'] >= start_time].copy()
 
         def kategori_waktu(hour):
             if 6 <= hour < 12: return 'Pagi'
@@ -70,7 +77,13 @@ def buat_dan_kirim():
             else: return 'Dini Hari'
 
         df_filtered['Kategori'] = df_filtered['Waktu_DT'].dt.hour.apply(kategori_waktu)
-        urutan_auto = df_filtered.drop_duplicates(subset=['Kategori'])['Kategori'].tolist()[:4]
+        
+        # Ambil 4 kategori unik pertama sesuai urutan waktu
+        urutan_auto = []
+        for kat in df_filtered['Kategori']:
+            if kat not in urutan_auto:
+                urutan_auto.append(kat)
+            if len(urutan_auto) == 4: break
         
         ringkasan = df_filtered.groupby('Kategori').agg({
             't': ['min', 'max'], 'hu': ['min', 'max'], 'ws': 'max',
@@ -78,12 +91,11 @@ def buat_dan_kirim():
         }).reindex(urutan_auto).dropna().reset_index()
         ringkasan.columns = ['Kategori', 'Suhu_Min', 'Suhu_Max', 'Hum_Min', 'Hum_Max', 'Angin_Max', 'Arah', 'Kondisi', 'Waktu_Ref']
 
-        # 3. VISUALISASI
+        # 3. VISUALISASI (TIDAK BERUBAH)
         img = Image.new('RGB', (1200, 800), color='#1c2833')
         draw = ImageDraw.Draw(img)
         f_path = "Roboto-Bold.ttf"
         
-        # Load Ikon & Logo
         i_temp = Image.open("temp.png").convert("RGBA").resize((35, 35))
         i_rh = Image.open("RH.png").convert("RGBA").resize((35, 35))
         i_wind = Image.open("wind.png").convert("RGBA").resize((35, 35))
@@ -95,7 +107,6 @@ def buat_dan_kirim():
         except:
             pass
 
-        # Load Font
         f_judul = ImageFont.truetype(f_path, 48)
         f_tgl = ImageFont.truetype(f_path, 26)
         f_kat = ImageFont.truetype(f_path, 36)
@@ -103,9 +114,8 @@ def buat_dan_kirim():
         f_label = ImageFont.truetype(f_path, 20)
         f_val = ImageFont.truetype(f_path, 24)
         f_ref = ImageFont.truetype(f_path, 18)
-        f_copy = ImageFont.truetype(f_path, 16) # Font khusus copyright
+        f_copy = ImageFont.truetype(f_path, 16)
 
-        # Header Bahasa Indonesia
         tgl_indo = dapatkan_hari_indo(sekarang)
         draw.text((600, 70), "PREDIKSI CUACA SENTANI", font=f_judul, fill='#FEE715', anchor="mm")
         draw.text((600, 115), tgl_indo.upper(), font=f_tgl, fill='#BDC3C7', anchor="mm")
@@ -113,46 +123,34 @@ def buat_dan_kirim():
 
         x_pos = 50
         for _, row in ringkasan.iterrows():
-            # Panel
             draw.rectangle([x_pos, 190, x_pos + 260, 760], outline="#34495e", width=2)
-            
-            # Kategori & Tanggal
             draw.text((x_pos+30, 225), row['Kategori'].upper(), font=f_kat, fill='#FEE715')
             draw.text((x_pos+30, 262), row['Waktu_Ref'].strftime('%d %b'), font=f_ref, fill='#95a5a6')
-            
-            # Suhu
             img.paste(i_temp, (x_pos+25, 300), i_temp)
             draw.text((x_pos+70, 295), f"{int(row['Suhu_Min'])}-{int(row['Suhu_Max'])}°C", font=f_suhu, fill='white')
             
-            # Kondisi Cuaca
             kondisi = str(row['Kondisi'])
             warna = '#E67E22' if 'Hujan' in kondisi or 'Petir' in kondisi else '#48dbfb'
             draw.text((x_pos+30, 375), kondisi, font=f_val, fill=warna)
             draw.line((x_pos+30, 440, x_pos+230, 440), fill="#34495e", width=1)
             
-            # KELEMBABAN
             img.paste(i_rh, (x_pos+25, 480), i_rh)
             draw.text((x_pos+70, 475), "Kelembaban:", font=f_label, fill='#BDC3C7')
             draw.text((x_pos+70, 503), f"{int(row['Hum_Min'])}-{int(row['Hum_Max'])}%", font=f_val, fill='white')
             
-            # ANGIN
             img.paste(i_wind, (x_pos+25, 580), i_wind)
             draw.text((x_pos+70, 575), "Angin Max:", font=f_label, fill='#BDC3C7')
             draw.text((x_pos+70, 603), f"{int(round(row['Angin_Max']))} km/j", font=f_val, fill='white')
             
-            # ARAH ANGIN
             arah_nama = terjemahkan_arah(row['Arah'])
             draw.text((x_pos+70, 640), f"Arah: {arah_nama}", font=f_ref, fill='#FEE715')
-            
             x_pos += 285
 
-        # COPYRIGHT BY KEDENG V (Posisi tengah bawah)
         draw.text((600, 785), "Copyright © 2026 by Kedeng V", font=f_copy, fill='#5d6d7e', anchor="mm")
 
         nama_file = "output.png"
         img.save(nama_file)
 
-        # 4. KIRIM KE TELEGRAM
         url_tele = f"https://api.telegram.org/bot{TOKEN_BOT}/sendPhoto"
         with open(nama_file, 'rb') as photo:
             requests.post(url_tele, data={'chat_id': CHAT_ID, 'caption': f"📊 Update Cuaca Sentani\n📅 {tgl_indo}"}, files={'photo': photo})
